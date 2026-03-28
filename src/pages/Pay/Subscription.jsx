@@ -1,592 +1,6 @@
-/*import { useLocation } from 'react-router-dom';
-import './Pay.scss';
-import { useEffect, useState } from 'react';
-import AppHelmet from '../AppHelmet';
-import ScrollToTop from '../ScrollToTop';
-import Loader from '../../components/Loader/Loader';
-import { useNavigate } from 'react-router-dom';
-import { pricings } from '../../data';
-import { useRecoilState, useSetRecoilState } from 'recoil';
-import { notificationState, subscriptionState, userState } from '../../recoil/atoms';
-import { getUser, updateUser } from '../../firebase';
-
-// PayHero API configuration - replace with your actual credentials
-const PAYHERO_CONFIG = {
-  baseUrl: 'https://backend.payhero.co.ke/api/v2',
-  apiUsername: 'gZNGpGEC2zoZfBnkRNsW',
-  apiPassword: 'ZAawtbp3HCACqEVVBPexKy41MYybrK2nyr98xEEm',
-  channelId: 3123, // Your registered payment channel ID
-};
-
-// Generate Basic Auth token for PayHero
-const generateBasicAuthToken = () => {
-  const credentials = `${PAYHERO_CONFIG.apiUsername}:${PAYHERO_CONFIG.apiPassword}`;
-  const encodedCredentials = btoa(credentials);
-  return `Basic ${encodedCredentials}`;
-};
-
-//Initiate PayHero payment (MPESA STK Push)
- 
-const initiatePayHeroPayment = async (paymentData) => {
-  try {
-    const response = await fetch(`${PAYHERO_CONFIG.baseUrl}/payments`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': generateBasicAuthToken(),
-      },
-      body: JSON.stringify({
-        amount: paymentData.amount,
-        phone_number: paymentData.phoneNumber,
-        channel_id: PAYHERO_CONFIG.channelId,
-        provider: "m-pesa",
-        external_reference: paymentData.externalReference,
-        customer_name: paymentData.customerName,
-        // Remove callback_url since we don't want webhooks
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`PayHero API error: ${errorText}`);
-    }
-
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error('PayHero payment initiation failed:', error);
-    throw error;
-  }
-};
-
-export default function Subscription() {
-  const [user, setUser] = useRecoilState(userState);
-  const [loading, setLoading] = useState(false);
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [paymentInitiated, setPaymentInitiated] = useState(false);
-  const [paymentReference, setPaymentReference] = useState('');
-  const location = useLocation();
-  const [data, setData] = useState(null);
-  const setNotification = useSetRecoilState(notificationState);
-  const [subscription, setSubscription] = useRecoilState(subscriptionState);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    if (location.state) {
-      setData(location.state.subscription);
-      setSubscription(location.state.subscription);
-    } else {
-      setData(pricings[0]);
-      setSubscription(pricings[0]);
-    }
-  }, [location]);
-
-  const handleUpgrade = async () => {
-    const currentDate = new Date().toISOString();
-    await updateUser(user.email, true, {
-      subDate: currentDate,
-      billing: subscription.billing,
-      plan: subscription.plan,
-    }, setNotification).then(() => {
-      getUser(user.email, setUser);
-    }).then(() => {
-      navigate("/", { replace: true });
-    });
-  };
-
-  const handlePayHeroPayment = async () => {
-    if (!phoneNumber) {
-      setNotification({
-        message: 'Please enter your phone number',
-        type: 'error'
-      });
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const paymentData = {
-        amount: Math.round((data && data.price) || subscription.price),
-        phoneNumber: phoneNumber.startsWith('254') ? phoneNumber : `254${phoneNumber.replace(/^0+/, '')}`,
-        externalReference: `SUB-${user.email}-${new Date().getTime()}`,
-        customerName: user.email.split('@')[0],
-      };
-
-      const result = await initiatePayHeroPayment(paymentData);
-
-      if (result.success) {
-        setPaymentInitiated(true);
-        setPaymentReference(result.reference);
-        setNotification({
-          message: 'MPESA payment request sent to your phone. Please complete the prompt on your device.',
-          type: 'success'
-        });
-
-        // Simple success simulation after delay (replace with manual confirmation)
-        setTimeout(() => {
-          setNotification({
-            message: 'Please confirm if you have completed the MPESA payment on your phone.',
-            type: 'info'
-          });
-        }, 5000);
-      } else {
-        setNotification({
-          message: 'Failed to initiate payment. Please try again.',
-          type: 'error'
-        });
-      }
-    } catch (error) {
-      setNotification({
-        message: `Payment failed: ${error.message}`,
-        type: 'error'
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleManualConfirmation = async () => {
-    setLoading(true);
-    try {
-      await handleUpgrade();
-    } catch (error) {
-      setNotification({
-        message: 'Failed to activate subscription. Please contact support.',
-        type: 'error'
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const formatPhoneNumber = (value) => {
-    const digits = value.replace(/\D/g, '');
-    
-    if (digits.length <= 3) return digits;
-    if (digits.length <= 6) return `${digits.slice(0, 3)} ${digits.slice(3)}`;
-    if (digits.length <= 9) return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
-    return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 9)} ${digits.slice(9, 12)}`;
-  };
-
-  const handlePhoneNumberChange = (e) => {
-    const formatted = formatPhoneNumber(e.target.value);
-    setPhoneNumber(formatted);
-  };
-
-  return (
-    <div className='pay'>
-      <AppHelmet title={"Subscription Payment"} />
-      <ScrollToTop />
-      
-      {loading && <Loader />}
-
-      <div className="payment-container">
-        {data && <h4>Payment Of KSH {data.price}</h4>}
-        {data && <h4>You Are About To Claim {data.plan} Plan.</h4>}
-        
-        {!paymentInitiated ? (
-          <div className="payment-form">
-            <div className="form-group">
-              <label htmlFor="phoneNumber">MPESA Phone Number</label>
-              <input
-                type="tel"
-                id="phoneNumber"
-                className="form-control"
-                placeholder="e.g., 07XX XXX XXX"
-                value={phoneNumber}
-                onChange={handlePhoneNumberChange}
-                disabled={loading}
-              />
-              <small className="form-text">
-                Enter your MPESA registered phone number. We'll send a payment request.
-              </small>
-            </div>
-            
-            <button 
-              className="btn" 
-              onClick={handlePayHeroPayment}
-              disabled={loading || !phoneNumber}
-            >
-              {loading ? 'Processing...' : 'Pay with MPESA'}
-            </button>
-          </div>
-        ) : (
-          <div className="payment-pending">
-            <div className="alert alert-info">
-              <h5>Payment Request Sent!</h5>
-              <p>We've sent an MPESA prompt to <strong>{phoneNumber}</strong>.</p>
-              <p>Please check your phone and enter your MPESA PIN to complete the payment.</p>
-              <p>Reference: <strong>{paymentReference}</strong></p>
-              
-              <div className="confirmation-buttons">
-                <p>After completing the payment on your phone:</p>
-                <button 
-                  className="btn" 
-                  onClick={handleManualConfirmation}
-                  disabled={loading}
-                >
-                  {loading ? 'Activating...' : 'I have completed the payment'}
-                </button>
-                <button 
-                  className="btn secondary" 
-                  onClick={() => setPaymentInitiated(false)}
-                >
-                  Try Again
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}*/
-/*import { useLocation } from 'react-router-dom';
-import './Pay.scss';
-import { useEffect, useState } from 'react';
-import AppHelmet from '../AppHelmet';
-import ScrollToTop from '../ScrollToTop';
-import Loader from '../../components/Loader/Loader';
-import { useNavigate } from 'react-router-dom';
-import { pricings } from '../../data';
-import { useRecoilState, useSetRecoilState } from 'recoil';
-import { notificationState, subscriptionState, userState } from '../../recoil/atoms';
-import { getUser, updateUser } from '../../firebase';
-
-// PayHero API configuration
-const PAYHERO_CONFIG = {
-  baseUrl: 'https://backend.payhero.co.ke/api/v2',
-  // Replace with your actual PayHero credentials
-  apiUsername: 'gZNGpGEC2zoZfBnkRNsW',
-  apiPassword: 'ZAawtbp3HCACqEVVBPexKy41MYybrK2nyr98xEEm',
-  channelId: 2216, // Your registered payment channel ID
-};
-
-// Generate Basic Auth token for PayHero
-const generateBasicAuthToken = () => {
-  const credentials = `${PAYHERO_CONFIG.apiUsername}:${PAYHERO_CONFIG.apiPassword}`;
-  const encodedCredentials = btoa(credentials);
-  return `Basic ${encodedCredentials}`;
-};
-
-//Initiate PayHero payment (MPESA STK Push)
- 
-const initiatePayHeroPayment = async (paymentData) => {
-  try {
-    const response = await fetch(`${PAYHERO_CONFIG.baseUrl}/payments`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': generateBasicAuthToken(),
-      },
-      body: JSON.stringify({
-        amount: paymentData.amount,
-        phone_number: paymentData.phoneNumber,
-        channel_id: PAYHERO_CONFIG.channelId,
-        provider: "m-pesa",
-        external_reference: paymentData.externalReference,
-        customer_name: paymentData.customerName,
-        callback_url: paymentData.callbackUrl,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`PayHero API error: ${errorText}`);
-    }
-
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error('PayHero payment initiation failed:', error);
-    throw error;
-  }
-};
-
-//Check payment status with PayHero
-
-const checkPayHeroPaymentStatus = async (reference) => {
-  try {
-    // Note: PayHero primarily uses webhooks/callbacks for status updates
-    // You might need to implement a separate endpoint to check status if needed
-    // This would depend on your backend implementation
-    console.log('Payment status checking would be handled via callback URL');
-    return null;
-  } catch (error) {
-    console.error('Failed to check payment status:', error);
-    return null;
-  }
-};
-
-export default function Subscription() {
-  const [user, setUser] = useRecoilState(userState);
-  const [loading, setLoading] = useState(false);
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [paymentInitiated, setPaymentInitiated] = useState(false);
-  const location = useLocation();
-  const [data, setData] = useState(null);
-  const setNotification = useSetRecoilState(notificationState);
-  const [subscription, setSubscription] = useRecoilState(subscriptionState);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    if (location.state) {
-      setData(location.state.subscription);
-      setSubscription(location.state.subscription);
-    } else {
-      setData(pricings[0]);
-      setSubscription(pricings[0]);
-    }
-  }, [location]);
-
-  const handleUpgrade = async () => {
-    const currentDate = new Date().toISOString();
-    await updateUser(user.email, true, {
-      subDate: currentDate,
-      billing: subscription.billing,
-      plan: subscription.plan,
-    }, setNotification).then(() => {
-      getUser(user.email, setUser);
-    }).then(() => {
-      navigate("/", { replace: true });
-    });
-  };
-
-  const handlePayHeroPayment = async () => {
-    if (!phoneNumber) {
-      setNotification({
-        message: 'Please enter your phone number',
-        type: 'error'
-      });
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const paymentData = {
-        amount: (data && data.price) || subscription.price,
-        phoneNumber: phoneNumber.startsWith('254') ? phoneNumber : `254${phoneNumber.replace(/^0+/, '')}`,
-        externalReference: `SUB-${user.email}-${new Date().getTime()}`,
-        customerName: user.email.split('@')[0],
-        callbackUrl: `${window.location.origin}/api/payhero-callback`, // Your callback endpoint
-      };
-
-      const result = await initiatePayHeroPayment(paymentData);
-
-      if (result.success) {
-        setPaymentInitiated(true);
-        setNotification({
-          message: 'Payment request sent to your phone. Please complete the MPESA prompt.',
-          type: 'success'
-        });
-
-        // Poll for payment status (optional - primarily rely on webhooks)
-        pollPaymentStatus(result.reference);
-      } else {
-        setNotification({
-          message: 'Failed to initiate payment. Please try again.',
-          type: 'error'
-        });
-      }
-    } catch (error) {
-      setNotification({
-        message: `Payment failed: ${error.message}`,
-        type: 'error'
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const pollPaymentStatus = async (reference) => {
-    // Simple polling mechanism - in production, rely more on webhooks
-    const maxAttempts = 30; // 5 minutes at 10-second intervals
-    let attempts = 0;
-
-    const checkStatus = async () => {
-      attempts++;
-      
-      try {
-        // In a real implementation, you'd check your backend which receives webhooks
-        // or implement a proper status check endpoint
-        const status = await checkPayHeroPaymentStatus(reference);
-        
-        if (status === 'Success') {
-          await handleUpgrade();
-          return;
-        }
-        
-        if (attempts < maxAttempts) {
-          setTimeout(checkStatus, 10000); // Check every 10 seconds
-        }
-      } catch (error) {
-        console.error('Status check failed:', error);
-      }
-    };
-
-    setTimeout(checkStatus, 10000);
-  };
-
-  const formatPhoneNumber = (value) => {
-    // Remove all non-digit characters
-    const digits = value.replace(/\D/g, '');
-    
-    // Format based on length
-    if (digits.length <= 3) return digits;
-    if (digits.length <= 6) return `${digits.slice(0, 3)} ${digits.slice(3)}`;
-    if (digits.length <= 9) return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
-    return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 9)} ${digits.slice(9, 12)}`;
-  };
-
-  const handlePhoneNumberChange = (e) => {
-    const formatted = formatPhoneNumber(e.target.value);
-    setPhoneNumber(formatted);
-  };
-
-  return (
-    <div className='pay'>
-      <AppHelmet title={"Subscription Payment"} />
-      <ScrollToTop />
-      
-      {loading && <Loader />}
-
-      <div className="payment-container">
-        {data && <h4>Payment Of KSH {data.price}</h4>}
-        {data && <h4>You Are About To Claim {data.plan} Plan.</h4>}
-        
-        {!paymentInitiated ? (
-          <div className="payment-form">
-            <div className="form-group">
-              <label htmlFor="phoneNumber">MPESA Phone Number</label>
-              <input
-                type="tel"
-                id="phoneNumber"
-                className="form-control"
-                placeholder="e.g., 07XX XXX XXX"
-                value={phoneNumber}
-                onChange={handlePhoneNumberChange}
-                disabled={loading}
-              />
-              <small className="form-text text-muted">
-                Enter your MPESA registered phone number. We'll send a payment request.
-              </small>
-            </div>
-            
-            <button 
-              className="btn btn-primary btn-pay" 
-              onClick={handlePayHeroPayment}
-              disabled={loading || !phoneNumber}
-            >
-              {loading ? 'Processing...' : 'Pay with MPESA'}
-            </button>
-          </div>
-        ) : (
-          <div className="payment-pending">
-            <div className="alert alert-info">
-              <h5>Payment Request Sent!</h5>
-              <p>We've sent an MPESA prompt to <strong>{phoneNumber}</strong>.</p>
-              <p>Please check your phone and enter your MPESA PIN to complete the payment.</p>
-              <p>Your subscription will be activated automatically once payment is confirmed.</p>
-            </div>
-            <button 
-              className="btn btn-secondary" 
-              onClick={() => setPaymentInitiated(false)}
-            >
-              Try Again
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}*/
-
-/*import { useLocation } from 'react-router-dom';
-import './Pay.scss';
-import { useEffect, useState } from 'react';
-import AppHelmet from '../AppHelmet';
-import ScrollToTop from '../ScrollToTop';
-import Loader from '../../components/Loader/Loader';
-import { useNavigate } from 'react-router-dom';
-import { pricings } from '../../data';
-import { useRecoilState, useSetRecoilState } from 'recoil';
-import { notificationState, subscriptionState, userState } from '../../recoil/atoms';
-import { PaystackButton } from 'react-paystack';
-import { getUser, updateUser } from '../../firebase';
-
-
-export default function Subscription() {
-  const [user, setUser] = useRecoilState(userState);
-  const [loading, setLoading] = useState(false);
-  const location = useLocation();
-  const [data, setData] = useState(null);
-  const setNotification = useSetRecoilState(notificationState);
-  const [subscription, setSubscription] = useRecoilState(subscriptionState);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    if (location.state) {
-      setData(location.state.subscription)
-      setSubscription(location.state.subscription)
-    } else {
-      setData(pricings[0])
-      setSubscription(pricings[0])
-    }
-  }, [location]);
-
-  const handleUpgrade = async () => {
-    const currentDate = new Date().toISOString();
-    await updateUser(user.email, true, {
-      subDate: currentDate,
-      billing: subscription.billing,
-      plan: subscription.plan,
-    }, setNotification).then(() => {
-      getUser(user.email, setUser);
-    }).then(() => {
-      navigate("/", { replace: true });
-    });
-  };
-
-  const componentProps = {
-		reference: new Date().getTime().toString(),
-		email: user ? user.email : "coongames8@gmail.com",
-		amount: (data && data.price * 100) || subscription.price * 100,
-		publicKey: "pk_live_71bc9718fd9b78e12c120101e663c27d9fc7b1cf",
-		currency: "KES",
-		metadata: {
-			name: user ? user.email : "coongames8@gmail.com",
-		},
-		text: "PAY NOW",
-		onSuccess: (response) => {
-			handleUpgrade();
-		},
-		onClose: () => {
-			//console.log('Payment dialog closed');
-			// Handle payment closure here
-		},
-	};
-
-  return (
-    <div className='pay'>
-      <AppHelmet title={"Booking"} />
-      <ScrollToTop />
-      {
-        loading && <Loader />
-      }
-
-      {data && <h4>Payment Of KSH {data.price}</h4>}
-      {data && <h4>You Are About To Claim {data.plan} Plan.</h4>}
-      <PaystackButton {...componentProps} className='btn' />
-    </div>
-  )
-}
-*/
-
 import { useLocation } from 'react-router-dom';
 import './Pay.scss';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import AppHelmet from '../AppHelmet';
 import ScrollToTop from '../ScrollToTop';
 import Loader from '../../components/Loader/Loader';
@@ -594,16 +8,15 @@ import { useNavigate } from 'react-router-dom';
 import { pricings } from '../../data';
 import { useRecoilState, useSetRecoilState } from 'recoil';
 import { notificationState, subscriptionState, userState } from '../../recoil/atoms';
-import { PaystackButton } from 'react-paystack';
 import { getUser, updateUser } from '../../firebase';
+import Swal from 'sweetalert2';
 
-// Twitter Events Utility Functions (implemented directly in the file)
+// Twitter Events Utility Functions
 const trackTwitterEvent = (eventId, parameters = {}) => {
   if (typeof window !== 'undefined' && window.twq) {
     window.twq('event', eventId, parameters);
   } else {
     console.warn('X Twitter pixel not loaded yet');
-    // Queue events if pixel hasn't loaded
     if (typeof window !== 'undefined') {
       window.twitterEventQueue = window.twitterEventQueue || [];
       window.twitterEventQueue.push({ eventId, parameters });
@@ -620,10 +33,9 @@ const trackPurchase = (value, currency = 'KES', contents = []) => {
   });
 };
 
-// Twitter Pixel Queue Hook (implemented directly in the file)
+// Twitter Pixel Queue Hook
 const useTwitterPixelQueue = () => {
   useEffect(() => {
-    // Process any queued events once pixel is loaded
     const processQueue = () => {
       if (window.twitterEventQueue && window.twitterEventQueue.length > 0) {
         window.twitterEventQueue.forEach(({ eventId, parameters }) => {
@@ -635,7 +47,6 @@ const useTwitterPixelQueue = () => {
       }
     };
 
-    // Check every 100ms if pixel is loaded
     const interval = setInterval(() => {
       if (window.twq) {
         processQueue();
@@ -643,7 +54,6 @@ const useTwitterPixelQueue = () => {
       }
     }, 100);
 
-    // Cleanup after 10 seconds
     setTimeout(() => {
       clearInterval(interval);
     }, 10000);
@@ -655,26 +65,169 @@ const useTwitterPixelQueue = () => {
 export default function Subscription() {
   const [user, setUser] = useRecoilState(userState);
   const [loading, setLoading] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const location = useLocation();
   const [data, setData] = useState(null);
   const setNotification = useSetRecoilState(notificationState);
   const [subscription, setSubscription] = useRecoilState(subscriptionState);
   const navigate = useNavigate();
+  const wsRef = useRef(null);
+  const currentCheckoutIdRef = useRef(null);
+  const statusCheckIntervalRef = useRef(null);
+
+  // HashBack API Configuration
+  const HASHBACK_API_URL = 'https://hash-back-server-production.up.railway.app';
 
   // Initialize Twitter pixel queue
   useTwitterPixelQueue();
 
   useEffect(() => {
     if (location.state) {
-      setData(location.state.subscription)
-      setSubscription(location.state.subscription)
+      setData(location.state.subscription);
+      setSubscription(location.state.subscription);
     } else {
-      setData(pricings[0])
-      setSubscription(pricings[0])
+      setData(pricings[0]);
+      setSubscription(pricings[0]);
     }
+
+    // Setup WebSocket connection for real-time payment confirmation
+    setupWebSocket();
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+      if (statusCheckIntervalRef.current) {
+        clearInterval(statusCheckIntervalRef.current);
+      }
+    };
   }, [location]);
 
+  const setupWebSocket = () => {
+    try {
+      wsRef.current = new WebSocket('wss://hash-back-server-production.up.railway.app');
+      
+      wsRef.current.onopen = () => {
+        console.log('WebSocket connected for subscription payment');
+      };
+      
+      wsRef.current.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          console.log('WebSocket message:', message);
+          
+          if (message.type === 'payment_completed') {
+            handlePaymentSuccess(message.data);
+          }
+        } catch (error) {
+          console.error('Error parsing WebSocket message:', error);
+        }
+      };
+      
+      wsRef.current.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+      
+      wsRef.current.onclose = () => {
+        console.log('WebSocket disconnected');
+        setTimeout(setupWebSocket, 5000);
+      };
+    } catch (error) {
+      console.log('WebSocket not supported, using polling fallback');
+    }
+  };
+
+  const formatPhoneNumberForHashBack = (phone) => {
+    let p = phone.toString().replace(/\D/g, "");
+    
+    if (p.startsWith("0")) {
+      return p;
+    }
+    if (p.startsWith("7") || p.startsWith("1")) {
+      return "0" + p;
+    }
+    if (p.startsWith("254")) {
+      return "0" + p.substring(3);
+    }
+    return p;
+  };
+
+  const handlePaymentSuccess = (data) => {
+    setIsProcessing(false);
+    
+    if (statusCheckIntervalRef.current) {
+      clearInterval(statusCheckIntervalRef.current);
+    }
+    
+    // Track successful payment
+    trackPurchase(
+      subscription.price,
+      'KES',
+      [
+        {
+          id: subscription.plan,
+          quantity: 1,
+          item_price: subscription.price
+        }
+      ]
+    );
+    
+    Swal.fire({
+      title: "Payment Successful! 🎉",
+      html: `
+        <div style="text-align: center;">
+          <i class="fas fa-check-circle" style="font-size: 48px; color: #10b981;"></i>
+          <h3 style="margin: 15px 0;">KSh ${data.amount || subscription.price} Paid</h3>
+          <p>Your subscription payment was successful!</p>
+          <p style="font-size: 0.85rem; color: #666; margin-top: 10px;">
+            Transaction ID: ${data.transactionId || data.TransactionID || 'N/A'}
+          </p>
+        </div>
+      `,
+      icon: "success",
+      confirmButtonText: "Activate Subscription",
+      confirmButtonColor: "#059669"
+    }).then(() => {
+      // Activate subscription after successful payment
+      handleUpgrade();
+    });
+  };
+
+  const checkPaymentStatus = async (checkoutId) => {
+    try {
+      const response = await fetch(`${HASHBACK_API_URL}/api/check-payment-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checkoutId })
+      });
+      
+      const data = await response.json();
+      console.log('Status check:', data);
+      
+      if (data.status === 'completed') {
+        if (statusCheckIntervalRef.current) {
+          clearInterval(statusCheckIntervalRef.current);
+        }
+        handlePaymentSuccess(data);
+      } else if (data.status === 'failed') {
+        if (statusCheckIntervalRef.current) {
+          clearInterval(statusCheckIntervalRef.current);
+        }
+        Swal.close();
+        Swal.fire({
+          title: "Payment Failed",
+          text: "The payment was not successful. Please try again.",
+          icon: "error"
+        });
+        setIsProcessing(false);
+      }
+    } catch (error) {
+      console.error('Status check error:', error);
+    }
+  };
+
   const handleUpgrade = async () => {
+    setLoading(true);
     const currentDate = new Date().toISOString();
     await updateUser(user.email, true, {
       subDate: currentDate,
@@ -683,68 +236,172 @@ export default function Subscription() {
     }, setNotification).then(() => {
       getUser(user.email, setUser);
     }).then(() => {
-      // Track successful purchase conversion
-      trackPurchase(
-        data?.price || subscription.price,
-        'KES',
-        [
-          {
-            id: subscription.plan,
-            quantity: 1,
-            item_price: data?.price || subscription.price
-          }
-        ]
-      );
+      setLoading(false);
       navigate("/", { replace: true });
+    }).catch((error) => {
+      setLoading(false);
+      console.error('Upgrade error:', error);
+      Swal.fire({
+        title: "Activation Failed",
+        text: "Payment was successful but subscription activation failed. Please contact support.",
+        icon: "error"
+      });
     });
   };
 
-  const componentProps = {
-    reference: new Date().getTime().toString(),
-    email: user ? user.email : "coongames8@gmail.com",
-    amount: (data && data.price * 100) || subscription.price * 100,
-    publicKey: "pk_live_71bc9718fd9b78e12c120101e663c27d9fc7b1cf",
-    currency: "KES",
-    metadata: {
-      name: user ? user.email : "coongames8@gmail.com",
-      plan: data?.plan || subscription.plan,
-      billing: data?.billing || subscription.billing
-    },
-    text: "PAY NOW",
-    onSuccess: (response) => {
-      // Track payment success (before upgrade completion)
-      trackTwitterEvent('tw-ql57w-ql57x', {
-        value: data?.price || subscription.price,
-        currency: 'KES',
-        contents: [
-          {
-            id: subscription.plan,
-            quantity: 1,
-            item_price: data?.price || subscription.price
+  const initiateHashBackPayment = async () => {
+    setIsProcessing(true);
+    
+    // Show loading
+    Swal.fire({
+      title: "Initiating Payment",
+      text: "Connecting to M-Pesa...",
+      allowOutsideClick: false,
+      didOpen: () => {
+        Swal.showLoading();
+      }
+    });
+    
+    try {
+      const reference = `SUB-${subscription.plan}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      const phoneNumber = user?.phone || "0712345678";
+      const formattedPhone = formatPhoneNumberForHashBack(phoneNumber);
+      
+      const response = await fetch(`${HASHBACK_API_URL}/api/initiate-payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: subscription.price,
+          phone: formattedPhone,
+          reference: reference,
+          userId: user?.email || 'anonymous',
+          metadata: {
+            plan: subscription.plan,
+            billing: subscription.billing,
+            type: 'subscription'
           }
-        ],
-        payment_status: 'successful'
+        })
       });
-      handleUpgrade();
-    },
-    onClose: () => {
-      // Track when user closes payment dialog without completing
-      trackTwitterEvent('tw-ql57w-ql57x', {
-        value: data?.price || subscription.price,
-        currency: 'KES',
-        contents: [
-          {
-            id: subscription.plan,
-            quantity: 1,
-            item_price: data?.price || subscription.price
+      
+      const data = await response.json();
+      console.log('Initiation response:', data);
+      
+      if (data.success && data.checkoutId) {
+        currentCheckoutIdRef.current = data.checkoutId;
+        
+        // Register with WebSocket if available
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            type: 'register',
+            checkoutId: data.checkoutId
+          }));
+        }
+        
+        Swal.close();
+        
+        // Show M-Pesa prompt
+        Swal.fire({
+          title: "Check Your Phone",
+          html: `
+            <div style="text-align: center;">
+              <i class="fas fa-mobile-alt" style="font-size: 48px; color: #065f46;"></i>
+              <h3 style="margin: 15px 0;">Enter M-Pesa PIN</h3>
+              <p>Check your phone to authorize payment of <strong>KSh ${subscription.price}</strong></p>
+              <p style="margin-top: 10px;"><small>Phone: ${formattedPhone}</small></p>
+              <div style="background: #f8f9ff; padding: 12px; border-radius: 8px; margin-top: 15px;">
+                <p style="font-size: 0.8rem; margin: 0; color: #666;">
+                  Reference: ${reference}
+                </p>
+              </div>
+              <p style="font-size: 0.8rem; color: #059669; margin-top: 10px;">
+                <i class="fas fa-clock"></i> You have 2 minutes to complete the payment
+              </p>
+            </div>
+          `,
+          icon: "info",
+          confirmButtonText: "I've Completed Payment",
+          showCancelButton: true,
+          cancelButtonText: "Cancel",
+        }).then((result) => {
+          if (result.isConfirmed) {
+            Swal.fire({
+              title: "Waiting for Confirmation",
+              html: `
+                <div style="text-align: center;">
+                  <div class="spinner-border text-success" role="status" style="width: 48px; height: 48px;">
+                    <span class="visually-hidden">Loading...</span>
+                  </div>
+                  <p style="margin-top: 15px;">Please wait while we confirm your payment...</p>
+                  <p style="font-size: 0.85rem; color: #666;">This will take a few moments</p>
+                </div>
+              `,
+              allowOutsideClick: false,
+              didOpen: () => {
+                Swal.showLoading();
+              }
+            });
+            
+            // Start polling for payment status
+            statusCheckIntervalRef.current = setInterval(() => {
+              if (currentCheckoutIdRef.current) {
+                checkPaymentStatus(currentCheckoutIdRef.current);
+              }
+            }, 5000);
+            
+            // Set timeout for payment confirmation (2 minutes)
+            setTimeout(() => {
+              if (statusCheckIntervalRef.current) {
+                clearInterval(statusCheckIntervalRef.current);
+                Swal.close();
+                Swal.fire({
+                  title: "Payment Not Confirmed",
+                  text: "Payment confirmation timed out. Please check your M-Pesa statement or contact support.",
+                  icon: "warning",
+                  confirmButtonColor: "#059669"
+                });
+                setIsProcessing(false);
+              }
+            }, 120000);
+          } else {
+            setIsProcessing(false);
+            Swal.fire({
+              title: "Payment Cancelled",
+              text: "You can complete the payment from your M-Pesa app or try again.",
+              icon: "info"
+            });
           }
-        ],
-        payment_status: 'cancelled'
+        });
+      } else {
+        throw new Error(data.error || data.message || "Initiation failed");
+      }
+    } catch (error) {
+      console.error('Payment error:', error);
+      Swal.fire({
+        title: "Payment Failed",
+        text: error.message || "Unable to initiate payment. Please try again.",
+        icon: "error"
       });
-    },
+      setIsProcessing(false);
+    }
   };
 
-  // Track when user lands on subscription page (page view for conversion funnel)
+  const handlePayment = () => {
+    if (!user?.phone) {
+      Swal.fire({
+        title: "Phone Number Required",
+        text: "Please update your profile with your phone number to make M-Pesa payments.",
+        icon: "warning",
+        confirmButtonText: "Update Profile"
+      }).then(() => {
+        navigate("/profile");
+      });
+      return;
+    }
+    
+    initiateHashBackPayment();
+  };
+
+  // Track when user lands on subscription page
   useEffect(() => {
     if (data) {
       trackTwitterEvent('tw-ql57w-ql57x', {
@@ -770,9 +427,79 @@ export default function Subscription() {
         loading && <Loader />
       }
 
-      {data && <h4>Payment Of KSH {data.price}</h4>}
-      {data && <h4>You Are About To Claim {data.plan} Plan.</h4>}
-      <PaystackButton {...componentProps} className='btn' />
+      <div className="payment-container" style={{ maxWidth: '500px', margin: '0 auto', padding: '20px' }}>
+        {data && (
+          <>
+            <h4 style={{ textAlign: 'center', marginBottom: '15px' }}>
+              Payment Of KSH {data.price}
+            </h4>
+            <h4 style={{ textAlign: 'center', marginBottom: '30px', color: '#666' }}>
+              You Are About To Claim {data.plan} Plan.
+            </h4>
+          </>
+        )}
+        
+        <div style={{ 
+          background: '#f8f9fa', 
+          padding: '20px', 
+          borderRadius: '12px', 
+          marginBottom: '20px' 
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+            <span>Plan:</span>
+            <strong>{subscription.plan}</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+            <span>Billing:</span>
+            <strong>{subscription.billing}</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Amount:</span>
+            <strong style={{ color: '#059669' }}>KSh {subscription.price}</strong>
+          </div>
+        </div>
+        
+        <button
+          onClick={handlePayment}
+          disabled={isProcessing || loading}
+          style={{
+            width: '100%',
+            padding: '15px',
+            background: isProcessing ? '#9ca3af' : 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+            color: 'white',
+            border: 'none',
+            borderRadius: '12px',
+            fontSize: '1rem',
+            fontWeight: '600',
+            cursor: (isProcessing || loading) ? 'not-allowed' : 'pointer',
+            transition: 'transform 0.2s'
+          }}
+        >
+          <i className={`fas ${isProcessing ? 'fa-spinner fa-spin' : 'fa-mobile-alt'}`} style={{ marginRight: '8px' }}></i>
+          {isProcessing ? "Processing..." : "Pay with M-Pesa via HashBack"}
+        </button>
+        
+        <div style={{ 
+          marginTop: '20px', 
+          textAlign: 'center', 
+          fontSize: '0.85rem', 
+          color: '#666' 
+        }}>
+          <i className="fas fa-lock" style={{ marginRight: '5px' }}></i>
+          Secure payment powered by HashBack
+        </div>
+        
+        {user?.phone && (
+          <div style={{ 
+            marginTop: '15px', 
+            textAlign: 'center', 
+            fontSize: '0.8rem', 
+            color: '#059669' 
+          }}>
+            <i className="fas fa-phone-alt"></i> Payment will be sent to: {user.phone}
+          </div>
+        )}
+      </div>
     </div>
-  )
+  );
 }
