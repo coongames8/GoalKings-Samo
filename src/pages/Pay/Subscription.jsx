@@ -152,6 +152,11 @@ export default function Subscription() {
     return p;
   };
 
+  const isValidPhoneNumber = (phone) => {
+    const digits = phone.replace(/\D/g, "");
+    return digits.startsWith("07") && digits.length === 10;
+  };
+
   const handlePaymentSuccess = (data) => {
     setIsProcessing(false);
     
@@ -249,7 +254,43 @@ export default function Subscription() {
     });
   };
 
-  const initiateHashBackPayment = async () => {
+  const showPhoneNumberModal = () => {
+    let phoneNumber = '';
+    
+    Swal.fire({
+      title: 'Enter Phone Number',
+      html: `
+        <div style="text-align: left;">
+          <p style="margin-bottom: 10px;">Please enter your M-Pesa phone number to complete the payment:</p>
+          <input type="tel" id="phoneNumber" class="swal2-input" placeholder="0712345678" maxlength="10" pattern="[0-9]{10}" />
+          <p style="font-size: 12px; color: #666; margin-top: 5px;">Format: 07XXXXXXXX (10 digits)</p>
+        </div>
+      `,
+      showCancelButton: true,
+      confirmButtonText: 'Pay Now',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#059669',
+      cancelButtonColor: '#6c757d',
+      preConfirm: () => {
+        const phone = document.getElementById('phoneNumber').value;
+        if (!phone) {
+          Swal.showValidationMessage('Phone number is required');
+          return false;
+        }
+        if (!isValidPhoneNumber(phone)) {
+          Swal.showValidationMessage('Please enter a valid Kenyan phone number starting with 07 (e.g., 0712345678)');
+          return false;
+        }
+        return phone;
+      }
+    }).then((result) => {
+      if (result.isConfirmed && result.value) {
+        initiateHashBackPayment(result.value);
+      }
+    });
+  };
+
+  const initiateHashBackPayment = async (phoneNumber) => {
     setIsProcessing(true);
     
     // Show loading
@@ -264,7 +305,6 @@ export default function Subscription() {
     
     try {
       const reference = `SUB-${subscription.plan}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-      const phoneNumber = user?.phone || "0712345678";
       const formattedPhone = formatPhoneNumberForHashBack(phoneNumber);
       
       const response = await fetch(`${HASHBACK_API_URL}/api/initiate-payment`, {
@@ -386,19 +426,8 @@ export default function Subscription() {
   };
 
   const handlePayment = () => {
-    if (!user?.phone) {
-      Swal.fire({
-        title: "Phone Number Required",
-        text: "Please update your profile with your phone number to make M-Pesa payments.",
-        icon: "warning",
-        confirmButtonText: "Update Profile"
-      }).then(() => {
-        navigate("/profile");
-      });
-      return;
-    }
-    
-    initiateHashBackPayment();
+    // Show phone number input modal
+    showPhoneNumberModal();
   };
 
   // Track when user lands on subscription page
@@ -489,16 +518,14 @@ export default function Subscription() {
           Secure payment powered by HashBack
         </div>
         
-        {user?.phone && (
-          <div style={{ 
-            marginTop: '15px', 
-            textAlign: 'center', 
-            fontSize: '0.8rem', 
-            color: '#059669' 
-          }}>
-            <i className="fas fa-phone-alt"></i> Payment will be sent to: {user.phone}
-          </div>
-        )}
+        <div style={{ 
+          marginTop: '15px', 
+          textAlign: 'center', 
+          fontSize: '0.8rem', 
+          color: '#059669' 
+        }}>
+          <i className="fas fa-info-circle"></i> You will enter your phone number in the next step
+        </div>
       </div>
     </div>
   );
